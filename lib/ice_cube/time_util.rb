@@ -255,16 +255,16 @@ module IceCube
       # DST-safely add an interval of time to the wrapped time
       def add(type, val)
         type = :day if type == :wday
-        adjust do
-          @time += case type
-          when :year then TimeUtil.days_in_n_years(@time, val) * ONE_DAY
-          when :month then TimeUtil.days_in_n_months(@time, val) * ONE_DAY
-          when :day  then val * ONE_DAY
-          when :hour then val * ONE_HOUR
-          when :min  then val * ONE_MINUTE
-          when :sec  then val
+        #  adjust do
+          @time = @time.in_time_zone + case type
+            when :year then val.years
+            when :month then val.months
+            when :day  then val.days
+            when :hour then val.hours
+            when :min  then val.minutes
+            when :sec  then val.seconds
           end
-        end
+        # end
       end
 
       # Clear everything below a certain type

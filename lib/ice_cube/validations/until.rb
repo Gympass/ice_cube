@@ -6,13 +6,11 @@ module IceCube
 
     # Value reader for limit
     def until_time
-      @until
+      (arr = @validations[:until]) && (val = arr[0]) && val.time
     end
     deprecated_alias :until_date, :until_time
 
     def until(time)
-      time = TimeUtil.ensure_time(time, true)
-      @until = time
       replace_validations_for(:until, time.nil? ? nil : [Validation.new(time)])
       self
     end
@@ -33,12 +31,14 @@ module IceCube
         false
       end
 
-      def validate(step_time, schedule)
-        raise UntilExceeded if step_time > time
+      def validate(step_time, start_time)
+        end_time = TimeUtil.ensure_time(time, start_time, true)
+        raise UntilExceeded if step_time > end_time
       end
 
       def build_s(builder)
-        builder.piece(:until) << "until #{time.strftime(IceCube.to_s_time_format)}"
+        date = IceCube::I18n.l(time, format: IceCube.to_s_time_format)
+        builder.piece(:until) << IceCube::I18n.t('ice_cube.until', date: date)
       end
 
       def build_hash(builder)

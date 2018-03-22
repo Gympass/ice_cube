@@ -1,17 +1,10 @@
+require 'ice_cube/input_alignment'
+
 module IceCube
 
   class ValidatedRule < Rule
 
     include Validations::ScheduleLock
-
-    include Validations::HourOfDay
-    include Validations::MinuteOfHour
-    include Validations::SecondOfMinute
-    include Validations::DayOfMonth
-    include Validations::DayOfWeek
-    include Validations::Day
-    include Validations::MonthOfYear
-    include Validations::DayOfYear
 
     include Validations::Count
     include Validations::Until
@@ -32,8 +25,15 @@ module IceCube
 
     attr_reader :validations
 
-    def initialize(interval = 1, *)
+    def initialize(interval = 1)
       @validations = Hash.new
+    end
+
+    # Reset the uses on the rule to 0
+    def reset
+      @time = nil
+      @start_time = nil
+      @uses = 0
     end
 
     def base_interval_validation
@@ -44,15 +44,14 @@ module IceCube
       Array(@validations[base_interval_validation.type])
     end
 
-    def base_interval_type
-      base_interval_validation.type
-    end
-
     # Compute the next time after (or including) the specified time in respect
-    # to the given schedule
-    def next_time(time, schedule, closing_time)
+    # to the given start time
+    def next_time(time, start_time, closing_time)
       @time = time
-      @schedule = schedule
+      unless @start_time
+        @start_time = realign(time, start_time)
+        @time = @start_time if @time < @start_time
+      end
 
       return nil unless find_acceptable_time_before(closing_time)
 
@@ -60,17 +59,17 @@ module IceCube
       @time
     end
 
-    def skipped_for_dst
-      @uses -= 1 if @uses > 0
+    def realign(opening_time, start_time)
+      start_time
     end
 
-    def dst_adjust?
-      @validations[:interval].any? &:dst_adjust?
+    def full_required?
+      !occurrence_count.nil?
     end
 
     def to_s
       builder = StringBuilder.new
-      @validations.each do |name, validations|
+      @validations.each_value do |validations|
         validations.each do |validation|
           validation.build_s(builder)
         end
@@ -80,7 +79,7 @@ module IceCube
 
     def to_hash
       builder = HashBuilder.new(self)
-      @validations.each do |name, validations|
+      @validations.each_value do |validations|
         validations.each do |validation|
           validation.build_hash(builder)
         end
@@ -90,7 +89,7 @@ module IceCube
 
     def to_ical
       builder = IcalBuilder.new
-      @validations.each do |name, validations|
+      @validations.each_value do |validations|
         validations.each do |validation|
           validation.build_ical(builder)
         end
@@ -123,7 +122,7 @@ module IceCube
 
     def normalized_interval(interval)
       int = interval.to_i
-      raise ArgumentError, "'#{interval}' is not a valid input for interval. Please pass an integer." unless int > 0
+      raise ArgumentError, "'#{interval}' is not a valid input for interval. Please pass a postive integer." unless int > 0
       int
     end
 
@@ -140,19 +139,17 @@ module IceCube
       true
     end
 
+    # Returns true if all validations for the current rule match
+    # otherwise false and shifts to the first (largest) unmatched offset
+    #
     def validation_accepts_or_updates_time?(validations_for_type)
-      res = validated_results(validations_for_type)
-      return true if res.any? { |r| r.nil? || r == 0 }
-      return nil if res.all? { |r| r == true }
-      res.reject! { |r| r == true }
+      res = validations_for_type.each_with_object([]) do |validation, offsets|
+        r = validation.validate(@time, @start_time)
+        return true if r.nil? || r == 0
+        offsets << r
+      end
       shift_time_by_validation(res, validations_for_type.first)
       false
-    end
-
-    def validated_results(validations_for_type)
-      validations_for_type.map do |validation|
-        validation.validate(@time, @schedule)
-      end
     end
 
     def shift_time_by_validation(res, validation)
@@ -179,6 +176,12 @@ module IceCube
 
     def validation_names
       VALIDATION_ORDER & @validations.keys
+    end
+
+    def verify_alignment(value, freq, rule_part)
+      InputAlignment.new(self, value, rule_part).verify(freq) do |error|
+        yield error
+      end
     end
 
   end

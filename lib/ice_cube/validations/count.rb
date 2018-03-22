@@ -4,14 +4,13 @@ module IceCube
 
     # Value reader for limit
     def occurrence_count
-      @count
+      (arr = @validations[:count]) && (val = arr[0]) && val.count
     end
 
     def count(max)
-      unless max.nil? || max.is_a?(Fixnum)
-        raise ArgumentError, "Expecting Fixnum or nil value for count, got #{max.inspect}"
+      unless max.nil? || max.is_a?(Integer)
+        raise ArgumentError, "Expecting Integer or nil value for count, got #{max.inspect}"
       end
-      @count = max
       replace_validations_for(:count, max && [Validation.new(max, self)])
       self
     end
@@ -33,7 +32,7 @@ module IceCube
         false
       end
 
-      def validate(time, schedule)
+      def validate(time, start_time)
         raise CountExceeded if rule.uses && rule.uses >= count
       end
 
@@ -51,7 +50,7 @@ module IceCube
 
       StringBuilder.register_formatter(:count) do |segments|
         count = segments.first
-        "#{count} #{count == 1 ? 'time' : 'times'}"
+        IceCube::I18n.t('ice_cube.times', count: count)
       end
 
     end

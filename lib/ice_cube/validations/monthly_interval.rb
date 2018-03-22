@@ -3,7 +3,10 @@ module IceCube
   module Validations::MonthlyInterval
 
     def interval(interval)
-      @interval = normalized_interval(interval)
+      interval = normalized_interval(interval)
+      verify_alignment(interval, :month, :interval) { |error| raise error }
+
+      @interval = interval
       replace_validations_for(:interval, [Validation.new(@interval)])
       clobber_base_validations(:month)
       self
@@ -25,8 +28,8 @@ module IceCube
         true
       end
 
-      def validate(step_time, schedule)
-        t0, t1 = schedule.start_time, step_time
+      def validate(step_time, start_time)
+        t0, t1 = start_time, step_time
         months = (t1.month - t0.month) +
                  (t1.year - t0.year) * 12
         offset = (months % interval).nonzero?
@@ -34,7 +37,7 @@ module IceCube
       end
 
       def build_s(builder)
-        builder.base = interval == 1 ? 'Monthly' : "Every #{interval} months"
+        builder.base = IceCube::I18n.t('ice_cube.each_month', count: interval)
       end
 
       def build_hash(builder)

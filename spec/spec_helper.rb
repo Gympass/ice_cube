@@ -1,11 +1,13 @@
+require "bundler/setup"
+require 'ice_cube'
+require 'timeout'
+
 begin
   require 'simplecov'
   SimpleCov.start
 rescue LoadError
   # okay
 end
-
-require File.dirname(__FILE__) + '/../lib/ice_cube'
 
 IceCube.compatibility = 12
 
@@ -18,41 +20,49 @@ WORLD_TIME_ZONES = [
   'Pacific/Auckland',   # +1200 / +1300
 ]
 
+# TODO: enable warnings here and update specs to call IceCube objects correctly
+def Object.const_missing(sym)
+  case sym
+  when :Schedule, :Rule, :Occurrence, :TimeUtil, :ONE_DAY, :ONE_HOUR, :ONE_MINUTE
+    # warn "Use IceCube::#{sym}", caller[0]
+    IceCube.const_get(sym)
+  else
+    super
+  end
+end
+
 RSpec.configure do |config|
+  # Enable flags like --only-failures and --next-failure
+  config.example_status_persistence_file_path = ".rspec_status"
+
+  config.expect_with :rspec do |c|
+    c.syntax = :expect
+  end
+
   Dir[File.dirname(__FILE__) + '/support/**/*'].each { |f| require f }
+
+  config.warnings = true
 
   config.include WarningHelpers
 
-  config.around :each, :if_active_support_time => true do |example|
-    example.run if defined? ActiveSupport
-  end
-
-  config.around :each, :if_active_support_time => false do |example|
-    unless defined? ActiveSupport
-      stubbed_active_support = ::ActiveSupport = Module.new
-      example.run
-      Object.send :remove_const, :ActiveSupport
+  config.before :each do |example|
+    if example.metadata[:requires_active_support]
+      raise 'ActiveSupport required but not present' unless defined?(ActiveSupport)
     end
   end
 
-  config.around :each do |example|
-    if zone = example.metadata[:system_time_zone]
-      @orig_zone = ENV['TZ']
-      ENV['TZ'] = zone
-      example.run
-      ENV['TZ'] = @orig_zone
-    else
-      example.run
-    end
+  config.around :each, system_time_zone: true do |example|
+    orig_zone = ENV['TZ']
+    ENV['TZ'] = example.metadata[:system_time_zone]
+    example.run
+    ENV['TZ'] = orig_zone
   end
 
-  config.before :each do
-    if time_args = @example.metadata[:system_time]
-      case time_args
-      when Array then Time.stub!(:now).and_return Time.local(*time_args)
-      when Time  then Time.stub!(:now).and_return time_args
-      end
-    end
+  config.around :each, locale: true do |example|
+    orig_locale = I18n.locale
+    I18n.locale = example.metadata[:locale]
+    example.run
+    I18n.locale = orig_locale
   end
 
   config.around :each, expect_warnings: true do |example|
@@ -61,4 +71,9 @@ RSpec.configure do |config|
     end
   end
 
+  config.around :each do |example|
+    Timeout.timeout(example.metadata.fetch(:timeout, 1)) do
+      example.run
+    end
+  end
 end

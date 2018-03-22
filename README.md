@@ -1,6 +1,6 @@
 # ice_cube - Easy schedule expansion
 
-[![Build Status][travis-ice_cube-png]][travis-ice_cube]
+[![Build Status][travis-ice_cube-badge_image]][travis-ice_cube]
 [![Gem Version](https://badge.fury.io/rb/ice_cube.svg)](http://badge.fury.io/rb/ice_cube)
 
 ```bash
@@ -47,7 +47,7 @@ Example: Specifying a recurrence with an exception time
 
 ```ruby
 schedule = IceCube::Schedule.new(now = Time.now) do |s|
-  s.add_recurrence_rule(IceCube::Rule.daily.count(3))
+  s.add_recurrence_rule(IceCube::Rule.daily.count(4))
   s.add_exception_time(now + 1.day)
 end
 
@@ -55,7 +55,7 @@ end
 occurrences = schedule.occurrences(end_time) # [now]
 
 # or all of the occurrences (only for terminating schedules)
-occurrences = schedule.all_occurrences # [now, now + 2.days]
+occurrences = schedule.all_occurrences # [now, now + 2.days, now + 3.days]
 
 # or check just a single time
 schedule.occurs_at?(now + 1.day)  # false
@@ -66,25 +66,28 @@ schedule.occurs_on?(Date.today) # true
 
 # or check whether it occurs between two dates
 schedule.occurs_between?(now, now + 30.days)          # true
-schedule.occurs_between?(now + 3.days, now + 30.days) # false
+schedule.occurs_between?(now + 4.days, now + 30.days) # false
 
 # or the first (n) occurrences
 schedule.first(2) # [now, now + 2.days]
 schedule.first    # now
 
 # or the last (n) occurrences (if the schedule terminates)
-schedule.last(2) # [now + 1.day, now + 2.days]
-schedule.last    # now + 2.days
+schedule.last(2) # [now + 2.days, now + 3.days]
+schedule.last    # now + 3.days
 
 # or the next occurrence
 schedule.next_occurrence(from_time)     # defaults to Time.now
-schedule.next_occurrences(3, from_time) # defaults to Time.now
+schedule.next_occurrences(4, from_time) # defaults to Time.now
 schedule.remaining_occurrences          # for terminating schedules
 
 # or the previous occurrence
 schedule.previous_occurrence(from_time)
-schedule.previous_occurrences(3, from_time)
+schedule.previous_occurrences(4, from_time)
 
+# or include prior occurrences with a duration overlapping from_time
+schedule.next_occurrences(4, from_time, :spans => true)
+schedule.occurrences_between(from_time, to_time, :spans => true)
 
 # or give the schedule a duration and ask if occurring_at?
 schedule = IceCube::Schedule.new(now, :duration => 3600)
@@ -105,7 +108,7 @@ schedule.each_occurrence { |t| puts t }
 ```
 
 The reason that schedules have durations and not individual rules, is to
-maintain compatability with the ical
+maintain compatibility with the ical
 RFC: http://www.kanzaki.com/docs/ical/rrule.html
 
 To limit schedules use `count` or `until` on the recurrence rules. Setting `end_time` on the schedule just sets the duration (from the start time) for each occurrence.
@@ -133,7 +136,7 @@ the schedule's start_time. Schedule start times are supported as:
 ice_cube implements its own hash-based .to_yaml, so you can quickly (and
 safely) serialize schedule objects in and out of your data store
 
-It also supports serialization to/from `ICAL`.
+It also supports partial serialization to/from `ICAL`. `RDATE` are not supported yet.
 
 ``` ruby
 yaml = schedule.to_yaml
@@ -236,12 +239,12 @@ schedule.add_recurrence_rule IceCube::Rule.yearly(4).day_of_year(-1)
 
 ```ruby
 # every year on the same day as start_time but in january and february
-schedule.add_recurrence_rule IceCube::Rule.yearly.month_of_year(:january, :februrary)
+schedule.add_recurrence_rule IceCube::Rule.yearly.month_of_year(:january, :february)
 
 # every third year in march
 schedule.add_recurrence_rule IceCube::Rule.yearly(3).month_of_year(:march)
 
-# for programatic convenience (same as above)
+# for programmatic convenience (same as above)
 schedule.add_recurrence_rule IceCube::Rule.yearly(3).month_of_year(3)
 ```
 
@@ -313,7 +316,7 @@ Use the GitHub [issue tracker][ice_cube-issues]
 [ical-3.6.1]: https://tools.ietf.org/html/rfc5545#section-3.6.1
 [github-avit]: https://github.com/avit/
 [travis-ice_cube]: http://travis-ci.org/seejohnrun/ice_cube
-[travis-ice_cube-png]: https://secure.travis-ci.org/seejohnrun/ice_cube.png
+[travis-ice_cube-badge_image]: https://secure.travis-ci.org/seejohnrun/ice_cube.svg
 [ice_cube-lone_star_pdf]: http://seejohnrun.github.com/ice_cube/static/lsrc_ice_cube.pdf
 [ice_cube-ruby_nyc_pdf]: http://seejohnrun.github.com/ice_cube/static/ice_cube_ruby_nyc.pdf
 [ice_cube-docs]: http://seejohnrun.github.com/ice_cube/

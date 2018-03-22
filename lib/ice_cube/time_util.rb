@@ -42,12 +42,12 @@ module IceCube
     end
 
     def self.match_zone(input_time, reference)
-      return unless time = ensure_time(input_time)
+      return unless time = ensure_time(input_time, reference)
       time = if reference.respond_to? :time_zone
                time.in_time_zone(reference.time_zone)
              else
                if reference.utc?
-                 time.utc
+                 time.getgm
                elsif reference.zone
                  time.getlocal
                else
@@ -58,13 +58,21 @@ module IceCube
     end
 
     # Ensure that this is either nil, or a time
-    def self.ensure_time(time, date_eod = false)
+    def self.ensure_time(time, reference = nil, date_eod = false)
       case time
       when DateTime
         warn "IceCube: DateTime support is deprecated (please use Time) at: #{ caller[2] }"
         Time.local(time.year, time.month, time.day, time.hour, time.min, time.sec)
       when Date
-        date_eod ? end_of_date(time) : time.to_time
+        if date_eod
+          end_of_date(time, reference)
+        else
+          if reference
+            build_in_zone([time.year, time.month, time.day], reference)
+          else
+            time.to_time
+          end
+        end
       else
         time
       end
@@ -81,24 +89,41 @@ module IceCube
 
     # Serialize a time appropriate for storing
     def self.serialize_time(time)
-      if time.respond_to?(:time_zone)
-        {:time => time.utc, :zone => time.time_zone.name}
-      elsif time.is_a?(Time)
-        time
+      case time
+      when Time, Date
+        if time.respond_to?(:time_zone)
+          {:time => time.utc, :zone => time.time_zone.name}
+        else
+          time
+        end
+      when DateTime
+        Time.local(time.year, time.month, time.day, time.hour, time.min, time.sec)
+      else
+        raise ArgumentError, "cannot serialize #{time.inspect}, expected a Time"
       end
     end
 
     # Deserialize a time serialized with serialize_time or in ISO8601 string format
     def self.deserialize_time(time_or_hash)
       case time_or_hash
-      when Time
+      when Time, Date
         time_or_hash
+      when DateTime
+        Time.local(time.year, time.month, time.day, time.hour, time.min, time.sec)
       when Hash
         hash = FlexibleHash.new(time_or_hash)
         hash[:time].in_time_zone(hash[:zone])
       when String
         Time.parse(time_or_hash)
       end
+    end
+
+    # Get a more precise equality for time objects
+    # Ruby provides a Time#hash method, but it fails to account for UTC
+    # offset (so the current date may be different) or DST rules (so the
+    # hour may be wrong for different schedule occurrences)
+    def self.hash(time)
+      [time, time.utc_offset, time.zone].hash
     end
 
     # Check the deserialized time offset string against actual local time
@@ -126,8 +151,8 @@ module IceCube
     # Convert a symbol to a numeric month
     def self.sym_to_month(sym)
       MONTHS.fetch(sym) do |k|
-        return wday = sym.to_i if MONTHS.values.any? { |i| i.to_s == sym.to_s }
-        raise ArgumentError, "Expecting Fixnum or Symbol value for month. " \
+        MONTHS.values.detect { |i| i.to_s == k.to_s } or
+        raise ArgumentError, "Expecting Integer or Symbol value for month. " \
                              "No such month: #{k.inspect}"
       end
     end
@@ -136,8 +161,8 @@ module IceCube
     # Convert a symbol to a wday number
     def self.sym_to_wday(sym)
       DAYS.fetch(sym) do |k|
-        return sym.to_i if DAYS.values.any? { |i| i.to_s == sym.to_s }
-        raise ArgumentError, "Expecting Fixnum or Symbol value for weekday. " \
+        DAYS.values.detect { |i| i.to_s == k.to_s } or
+        raise ArgumentError, "Expecting Integer or Symbol value for weekday. " \
                              "No such weekday: #{k.inspect}"
       end
     end
@@ -145,18 +170,11 @@ module IceCube
 
     # Convert wday number to day symbol
     def self.wday_to_sym(wday)
-      return sym = wday if DAYS.keys.include? wday
+      return wday if DAYS.keys.include? wday
       DAYS.invert.fetch(wday) do |i|
-        raise ArgumentError, "Expecting Fixnum value for weekday. " \
+        raise ArgumentError, "Expecting Integer value for weekday. " \
                              "No such wday number: #{i.inspect}"
       end
-    end
-
-    # Convert a symbol to an ical day (SU, MO)
-    def self.week_start(sym)
-      raise ArgumentError, "Invalid day: #{str}" unless DAYS.keys.include?(sym)
-      day = sym.to_s.upcase[0..1]
-      day
     end
 
     # Convert weekday from base sunday to the schedule's week start.
@@ -235,8 +253,19 @@ module IceCube
       end
     end
 
-    def self.same_clock?(t1, t2)
-      CLOCK_VALUES.all? { |i| t1.send(i) == t2.send(i) }
+    # Handle discrepancies between various time types
+    # - Time has subsec
+    # - DateTime does not
+    # - ActiveSupport::TimeWithZone can wrap either type, depending on version
+    #   or if `parse` or `now`/`local` was used to build it.
+    def self.subsec(time)
+      if time.respond_to?(:subsec)
+        time.subsec
+      elsif time.respond_to?(:sec_fraction)
+        time.sec_fraction
+      else
+        0.0
+      end
     end
 
     # A utility class for safely moving time around
@@ -244,26 +273,33 @@ module IceCube
 
       def initialize(time, dst_adjust = true)
         @dst_adjust = dst_adjust
-        @time = time
+        @base = time
+        if dst_adjust
+          @time = Time.utc(time.year, time.month, time.day, time.hour, time.min, time.sec + TimeUtil.subsec(time))
+        else
+          @time = time
+        end
       end
 
-      # Get the wrapper time back
+      # Get the wrapped time back in its original zone & format
       def to_time
-        @time
+        return @time unless @dst_adjust
+        parts = @time.year, @time.month, @time.day, @time.hour, @time.min, @time.sec + @time.subsec
+        TimeUtil.build_in_zone(parts, @base)
       end
 
       # DST-safely add an interval of time to the wrapped time
       def add(type, val)
         type = :day if type == :wday
         #  adjust do
-          @time = @time.in_time_zone + case type
-            when :year then val.years
-            when :month then val.months
-            when :day  then val.days
-            when :hour then val.hours
-            when :min  then val.minutes
-            when :sec  then val.seconds
-          end
+        @time = @time.in_time_zone + case type
+          when :year then val.years
+          when :month then val.months
+          when :day  then val.days
+          when :hour then val.hours
+          when :min  then val.minutes
+          when :sec  then val.seconds
+        end
         # end
       end
 
@@ -273,23 +309,20 @@ module IceCube
         type = :day if type == :wday
         CLEAR_ORDER.each do |ptype|
           break if ptype == type
-          adjust do
-            send(:"clear_#{ptype}")
-          end
+          send :"clear_#{ptype}"
         end
       end
 
-      private
+      def hour=(value)
+        @time += (value * ONE_HOUR) - (@time.hour * ONE_HOUR)
+      end
 
-      def adjust(&block)
-        if @dst_adjust
-          off = @time.utc_offset
-          yield
-          diff = off - @time.utc_offset
-          @time += diff if diff != 0
-        else
-          yield
-        end
+      def min=(value)
+        @time += (value * ONE_MINUTE) - (@time.min * ONE_MINUTE)
+      end
+
+      def sec=(value)
+        @time += (value) - (@time.sec)
       end
 
       def clear_sec
@@ -316,10 +349,6 @@ module IceCube
           @time -= TimeUtil.days_in_month(@time) * ONE_DAY
         end
         @time += ONE_DAY
-      end
-
-      def clear_year
-        @time
       end
 
     end

@@ -7,44 +7,52 @@ module IceCube
         (property, tzid) = property.split(';')
         case property
         when 'DTSTART'
-          data[:start_time] = Time.parse(value)
+          data[:start_time] = TimeUtil.deserialize_time(value)
         when 'DTEND'
-          data[:end_time] = Time.parse(value)
+          data[:end_time] = TimeUtil.deserialize_time(value)
+        when 'RDATE'
+          data[:rtimes] ||= []
+          data[:rtimes] += value.split(',').map { |v| TimeUtil.deserialize_time(v) }
         when 'EXDATE'
           data[:extimes] ||= []
-          data[:extimes] += value.split(',').map{|v| Time.parse(v)}
+          data[:extimes] += value.split(',').map { |v| TimeUtil.deserialize_time(v) }
         when 'DURATION'
           data[:duration] # FIXME
         when 'RRULE'
-          data[:rrules] = [rule_from_ical(value)]
+          data[:rrules] ||= []
+          data[:rrules] += [rule_from_ical(value)]
         end
       end
       Schedule.from_hash data
     end
 
     def self.rule_from_ical(ical)
-      params = { validations: { } }
+      raise ArgumentError, 'empty ical rule' if ical.nil?
+
+      validations = {}
+      params = {validations: validations, interval: 1}
 
       ical.split(';').each do |rule|
         (name, value) = rule.split('=')
+        raise ArgumentError, "Invalid iCal rule component" if value.nil?
         value.strip!
         case name
         when 'FREQ'
-          params[:freq] = value.downcase
+          params[:rule_type] = "IceCube::#{value[0]}#{value.downcase[1..-1]}Rule"
         when 'INTERVAL'
           params[:interval] = value.to_i
         when 'COUNT'
           params[:count] = value.to_i
         when 'UNTIL'
-          params[:until] = Time.parse(value).utc
+          params[:until] = TimeUtil.deserialize_time(value).utc
         when 'WKST'
-          params[:wkst] = TimeUtil.ical_day_to_symbol(value)
+          params[:week_start] = TimeUtil.ical_day_to_symbol(value)
         when 'BYSECOND'
-          params[:validations][:second_of_minute] = value.split(',').collect(&:to_i)
+          validations[:second_of_minute] = value.split(',').map(&:to_i)
         when 'BYMINUTE'
-          params[:validations][:minute_of_hour] = value.split(',').collect(&:to_i)
+          validations[:minute_of_hour] = value.split(',').map(&:to_i)
         when 'BYHOUR'
-          params[:validations][:hour_of_day] = value.split(',').collect(&:to_i)
+          validations[:hour_of_day] = value.split(',').map(&:to_i)
         when 'BYDAY'
           dows = {}
           days = []
@@ -58,33 +66,21 @@ module IceCube
               days.push TimeUtil.sym_to_wday(day) if dows[day].nil?
             end
           end
-          params[:validations][:day_of_week] = dows unless dows.empty?
-          params[:validations][:day] = days unless days.empty?
+          validations[:day_of_week] = dows unless dows.empty?
+          validations[:day] = days unless days.empty?
         when 'BYMONTHDAY'
-          params[:validations][:day_of_month] = value.split(',').collect(&:to_i)
+          validations[:day_of_month] = value.split(',').map(&:to_i)
         when 'BYMONTH'
-          params[:validations][:month_of_year] = value.split(',').collect(&:to_i)
+          validations[:month_of_year] = value.split(',').map(&:to_i)
         when 'BYYEARDAY'
-          params[:validations][:day_of_year] = value.split(',').collect(&:to_i)
+          validations[:day_of_year] = value.split(',').map(&:to_i)
         when 'BYSETPOS'
         else
-          raise "Invalid or unsupported rrule command: #{name}"
+          validations[name] = nil # invalid type
         end
       end
 
-      params[:interval] ||= 1
-
-      # WKST only valid for weekly rules
-      params.delete(:wkst) unless params[:freq] == 'weekly'
-
-      rule = Rule.send(*params.values_at(:freq, :interval, :wkst).compact)
-      rule.count(params[:count]) if params[:count]
-      rule.until(params[:until]) if params[:until]
-      params[:validations].each do |key, value|
-        value.is_a?(Array) ? rule.send(key, *value) : rule.send(key, value)
-      end
-
-      rule
+      Rule.from_hash(params)
     end
   end
 end
